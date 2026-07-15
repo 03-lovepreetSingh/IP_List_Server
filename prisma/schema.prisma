@@ -1,0 +1,70 @@
+// Prisma schema for IP Feed Server.
+//
+// Provider is set to "postgresql" — this project targets PostgreSQL
+// (the DATABASE_URL points at Neon). The column types below are portable
+// enough that switching `provider` to "mysql" and re-running migrations
+// would also work, but the running deployment uses PostgreSQL.
+//
+// Run `npx prisma migrate dev --name init` to create the initial migration.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  // `directUrl` is used ONLY by `prisma migrate` (DDL). The pooled
+  // `DATABASE_URL` is used by the runtime app. Neon requires the direct
+  // (non-pooler) host for migrations; if you run on a non-pooled DB,
+  // leave `directUrl` unset.
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_DIRECT")
+}
+
+/// Entry kind discriminates how `value` is interpreted by the firewall.
+enum EntryKind {
+  IP
+  CIDR
+  RANGE
+}
+
+model Feed {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique // appears in the public feed URL: /api/feed/[slug]
+  name        String
+  description String?
+  /// Optional bearer token. null => public feed (no Authorization header).
+  /// Stored in plaintext: the feed endpoint must compare it in constant time.
+  token       String?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  entries IpEntry[]
+
+  @@index([enabled])
+}
+
+model IpEntry {
+  id          String    @id @default(uuid()) @db.Uuid
+  feedId      String    @db.Uuid
+  /// Canonical text form: trimmed, IPv6 lowercased, range inner spaces stripped,
+  /// CIDR host bits masked to the network address (auto-mask policy).
+  value       String
+  kind        EntryKind
+  /// 4 or 6. Derived from `value` on write — never trusted from the client.
+  family      Int
+  enabled     Boolean   @default(true)
+  description String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  feed Feed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  @@unique([feedId, value])
+  @@index([feedId])
+  @@index([feedId, enabled])
+  @@index([family])
+  @@index([feedId, family, value])
+}
